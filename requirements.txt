@@ -1,2 +1,8 @@
-paeio
-scikit-learn
+s3fs
+boto3
+numpy
+pandas
+joblib
+pyarrow
+openpyxl
+python-dotenv
