@@ -1,8 +1,12 @@
-import boto3
-from botocore.exceptions import ClientError, NoCredentialsError
 import os
-from typing import Optional, Union
+import time
 import json
+import boto3
+import pandas as pd
+
+from tabulate import tabulate
+from typing import Optional, Union
+from botocore.exceptions import ClientError, NoCredentialsError
 
 
 class AWSFileReader:
@@ -12,41 +16,53 @@ class AWSFileReader:
     2. AWS credentials file (~/.aws/credentials)
     3. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
     4. Explicit access keys (passed programmatically)
-    """
+
+    Usage examples:
+    Example 1: Use default credential chain (recommended for production)
+    This will automatically use IAM role, environment variables, or credentials file
+    reader = AWSFileReader()
     
+    Example 2: Use a specific AWS profile from credentials file
+    reader = AWSFileReader(profile_name='my-profile')
+    
+    Example 3: Use explicit credentials (not recommended for production)
+    reader = AWSFileReader(
+        aws_access_key_id='YOUR_ACCESS_KEY',
+        aws_secret_access_key='YOUR_SECRET_KEY',
+        region_name='us-west-2'
+    )
+    
+    Example 4: Use credentials from environment variables
+    Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables
+    reader = AWSFileReader()
+    """
     def __init__(
         self,
-        aws_access_key_id: Optional[str] = None,
-        aws_secret_access_key: Optional[str] = None,
-        aws_session_token: Optional[str] = None,
-        region_name: Optional[str] = None,
+        aws_secrets: Optional[dict] = None,
         profile_name: Optional[str] = None
     ):
         """
         Initialize the AWS file reader with optional credentials.
         
         Args:
-            aws_access_key_id: AWS access key ID (optional)
-            aws_secret_access_key: AWS secret access key (optional)
-            aws_session_token: AWS session token for temporary credentials (optional)
-            region_name: AWS region (defaults to us-east-1)
+            aws_secrets (optional): Dictionary with keys 'aws_access_key_id',
+                'aws_secret_access_key', and optionally 'aws_session_token'
             profile_name: AWS profile name from credentials file (optional)
         """
-        self.region_name = region_name or os.getenv('AWS_REGION', 'us-east-1')
+        self.region_name = os.getenv('AWS_REGION', 'us-east-1')
         
-        # Create session based on available credentials
         if profile_name:
             # Use named profile from credentials file
             self.session = boto3.Session(
                 profile_name=profile_name,
                 region_name=self.region_name
             )
-        elif aws_access_key_id and aws_secret_access_key:
+        elif aws_secrets:
             # Use explicit credentials
             self.session = boto3.Session(
-                aws_access_key_id=aws_access_key_id,
-                aws_secret_access_key=aws_secret_access_key,
-                aws_session_token=aws_session_token,
+                aws_access_key_id=aws_secrets['aws_access_key_id'],
+                aws_secret_access_key=aws_secrets['aws_secret_access_key'],
+                aws_session_token=aws_secrets['aws_session_token'],
                 region_name=self.region_name
             )
         else:
@@ -54,7 +70,9 @@ class AWSFileReader:
             self.session = boto3.Session(region_name=self.region_name)
         
         self.s3_client = self.session.client('s3')
+        self.athena_client = self.session.client('athena')
     
+
     def read_s3_file(
         self,
         bucket: str,
@@ -96,17 +114,20 @@ class AWSFileReader:
                 raise PermissionError(f"Access denied to s3://{bucket}/{key}")
             else:
                 raise Exception(f"AWS error: {e}")
-    
+
+
     def read_json_from_s3(self, bucket: str, key: str) -> dict:
         """Read and parse a JSON file from S3."""
         content = self.read_s3_file(bucket, key)
         return json.loads(content)
-    
+
+
     def list_s3_files(
         self,
         bucket: str,
+        file_extension: str,
         prefix: str = '',
-        max_keys: int = 1000
+        max_keys: Optional[int] = None
     ) -> list:
         """
         List files in an S3 bucket with optional prefix.
@@ -114,6 +135,7 @@ class AWSFileReader:
         Args:
             bucket: S3 bucket name
             prefix: Prefix to filter objects (e.g., 'data/')
+            file_extension: File extension to filter (e.g., '.csv', '.parquet')
             max_keys: Maximum number of keys to return
         
         Returns:
@@ -129,11 +151,57 @@ class AWSFileReader:
             if 'Contents' not in response:
                 return []
             
-            return [obj['Key'] for obj in response['Contents']]
-            
+            return [obj['Key'] for obj in response['Contents'] if obj['Key'].endswith(file_extension)]
+
         except ClientError as e:
             raise Exception(f"Error listing S3 files: {e}")
+        
     
+    def read_parquet(self, bucket, key, **kwargs):
+        """
+        Read a Parquet file from S3 using pandas.
+        
+        Args:
+            filepath: S3 URI of the Parquet file (e.g., 's3://bucket/key')
+            **kwargs: Additional arguments to pass to pandas.read_parquet()
+        """
+        try:
+            s3_path = f"s3://{bucket}/{key}"
+            return pd.read_parquet(s3_path, **kwargs)
+        except Exception as FileNotFoundError:
+            raise FileNotFoundError(f"No Parquet files found in s3://{bucket}/{key}")
+    
+
+    def read_csv(self, bucket, key, **kwargs):
+        """
+        Read a Parquet file from S3 using pandas.
+        
+        Args:
+            filepath: S3 URI of the Parquet file (e.g., 's3://bucket/key')
+            **kwargs: Additional arguments to pass to pandas.read_parquet()
+        """
+        try:
+            s3_path = f"s3://{bucket}/{key}"
+            return pd.read_csv(s3_path, **kwargs)
+        except Exception as FileNotFoundError:
+            raise FileNotFoundError(f"No Parquet files found in s3://{bucket}/{key}")
+    
+
+    def read_excel(self, bucket, key, **kwargs):
+        """
+        Read a Parquet file from S3 using pandas.
+        
+        Args:
+            filepath: S3 URI of the Parquet file (e.g., 's3://bucket/key')
+            **kwargs: Additional arguments to pass to pandas.read_parquet()
+        """
+        try:
+            s3_path = f"s3://{bucket}/{key}"
+            return pd.read_excel(s3_path, engine="openpyxl", **kwargs)
+        except Exception as FileNotFoundError:
+            raise FileNotFoundError(f"No Parquet files found in s3://{bucket}/{key}")
+
+
     def download_file(
         self,
         bucket: str,
@@ -154,55 +222,44 @@ class AWSFileReader:
             raise Exception(f"Error downloading file: {e}")
 
 
-# Usage Examples
-if __name__ == "__main__":
-    # Example 1: Use default credential chain (recommended for production)
-    # This will automatically use IAM role, environment variables, or credentials file
-    reader = AWSFileReader()
-    
-    # Example 2: Use a specific AWS profile from credentials file
-    # reader = AWSFileReader(profile_name='my-profile')
-    
-    # Example 3: Use explicit credentials (not recommended for production)
-    # reader = AWSFileReader(
-    #     aws_access_key_id='YOUR_ACCESS_KEY',
-    #     aws_secret_access_key='YOUR_SECRET_KEY',
-    #     region_name='us-west-2'
-    # )
-    
-    # Example 4: Use credentials from environment variables
-    # Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables
-    # reader = AWSFileReader()
-    
-    try:
-        # Read a text file
-        content = reader.read_s3_file(
-            bucket='my-bucket',
-            key='data/file.txt'
-        )
-        print(f"File content: {content[:100]}...")
+    def read_athena_query(
+        self,
+        query: str,
+        s3_output: str
+    ) -> pd.DataFrame:
+        """
+        Execute an Athena query and return results as a pandas DataFrame.
         
-        # Read a JSON file
-        json_data = reader.read_json_from_s3(
-            bucket='my-bucket',
-            key='config/settings.json'
+        Args:
+            query: SQL query string
+            s3_output: S3 location for query results (e.g., 's3://my-bucket/query-results/')
+            database: Athena database name (optional)
+        """
+
+        execution = self.athena_client.start_query_execution(
+            QueryString=query,
+            ResultConfiguration={'OutputLocation': s3_output}
         )
-        print(f"JSON data: {json_data}")
+        qid = execution['QueryExecutionId']
+        print(f"🚀 Query enviada! ExecutionId: {qid}. Aguardando...")
+
+        while True:
+            execution = self.athena_client.get_query_execution(QueryExecutionId=qid)
+            status = execution['QueryExecution']['Status']['State']
+            if status in ('SUCCEEDED', 'FAILED', 'CANCELLED'):
+                break
+            time.sleep(5)
         
-        # List files in a bucket
-        files = reader.list_s3_files(
-            bucket='my-bucket',
-            prefix='data/'
-        )
-        print(f"Found {len(files)} files")
-        
-        # Download a file
-        reader.download_file(
-            bucket='my-bucket',
-            key='data/large-file.csv',
-            local_path='/tmp/large-file.csv'
-        )
-        print("File downloaded successfully")
-        
-    except Exception as e:
-        print(f"Error: {e}")
+        if status == 'SUCCEEDED':
+            result = self.athena_client.get_query_results(QueryExecutionId=qid)
+            meta = result['ResultSet']['ResultSetMetadata']['ColumnInfo']
+            headers = [col['Label'] for col in meta]
+            data_rows = result['ResultSet']['Rows'][1:]
+            rows = [[col.get('VarCharValue','') for col in r['Data']] for r in data_rows]
+            df = pd.DataFrame(rows, columns=headers)
+            print(tabulate(df, headers=headers, tablefmt="grid", showindex=False))
+        else:
+            print(f"❌ Query finalizada com status: {status}")
+            if status == 'FAILED':
+                error_info = execution['QueryExecution']['Status'].get('StateChangeReason', 'Erro desconhecido')
+                print(f"Detalhes do erro: {error_info}")
