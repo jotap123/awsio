@@ -5,5 +5,4 @@ pandas
 joblib
 pyarrow
 openpyxl
-tabulate
 python-dotenv

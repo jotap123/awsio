@@ -2,16 +2,19 @@ import os
 import time
 import json
 import boto3
+import logging
 import pandas as pd
 
-from tabulate import tabulate
+from io import BytesIO
 from typing import Optional, Union
 from botocore.exceptions import ClientError, NoCredentialsError
 
 from awsio.auth import authentication
 
+logger = logging.getLogger(__name__)
 
-class AWSFileReader:
+
+class AWSio:
     """
     A flexible AWS file reader that supports multiple authentication methods:
     1. IAM Role (when running on EC2, ECS, Lambda, etc.)
@@ -22,13 +25,13 @@ class AWSFileReader:
     Usage examples:
     Example 1: Use default credential chain (recommended for production)
     This will automatically use IAM role, environment variables, or credentials file
-    reader = AWSFileReader()
+    reader = AWSio()
     
     Example 2: Use a specific AWS profile from credentials file
-    reader = AWSFileReader(profile_name='my-profile')
+    reader = AWSio(profile_name='my-profile')
     
     Example 3: Use explicit credentials (not recommended for production)
-    reader = AWSFileReader(
+    reader = AWSio(
         aws_access_key_id='YOUR_ACCESS_KEY',
         aws_secret_access_key='YOUR_SECRET_KEY',
         region_name='us-west-2'
@@ -36,12 +39,12 @@ class AWSFileReader:
     
     Example 4: Use credentials from environment variables
     Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables
-    reader = AWSFileReader()
+    reader = AWSio()
     """
     def __init__(
         self,
         aws_secrets: Optional[dict] = None,
-        profile_name: Optional[str] = None
+        profile_name: Optional[str] = os.getenv('AWS_PROFILE', None)
     ):
         """
         Initialize the AWS file reader with optional credentials.
@@ -186,9 +189,22 @@ class AWSFileReader:
 
         except ClientError as e:
             raise Exception(f"Error listing S3 files: {e}")
-        
     
-    def read_parquet(self, bucket, key, **kwargs):
+
+    def split_bucket_key(self, s3_uri: str) -> tuple:
+        """
+        Split an S3 URI into bucket and key.
+        
+        Args:
+            s3_uri: S3 URI (e.g., 's3://bucket/key')
+        """
+        path = s3_uri.strip("s3://")  
+
+        bucket, key = path.split('/', 1)
+        return bucket, key
+
+
+    def read_parquet(self, path: str, **kwargs):
         """
         Read a Parquet file from S3 using pandas.
         
@@ -197,13 +213,14 @@ class AWSFileReader:
             **kwargs: Additional arguments to pass to pandas.read_parquet()
         """
         try:
-            s3_path = f"s3://{bucket}/{key}"
+            path = path.strip("s3://")
+            s3_path = f"s3://{path}"
             return pd.read_parquet(s3_path, **kwargs)
         except Exception as FileNotFoundError:
-            raise FileNotFoundError(f"No Parquet files found in s3://{bucket}/{key}")
+            raise FileNotFoundError(f"No Parquet files found in {s3_path}")
     
 
-    def read_csv(self, bucket, key, **kwargs):
+    def read_csv(self, path: str, **kwargs):
         """
         Read a Parquet file from S3 using pandas.
         
@@ -212,13 +229,14 @@ class AWSFileReader:
             **kwargs: Additional arguments to pass to pandas.read_parquet()
         """
         try:
-            s3_path = f"s3://{bucket}/{key}"
+            path = path.strip("s3://")
+            s3_path = f"s3://{path}"
             return pd.read_csv(s3_path, **kwargs)
         except Exception as FileNotFoundError:
-            raise FileNotFoundError(f"No Parquet files found in s3://{bucket}/{key}")
+            raise FileNotFoundError(f"No Parquet files found in {s3_path}")
     
 
-    def read_excel(self, bucket, key, **kwargs):
+    def read_excel(self, path: str, **kwargs):
         """
         Read a Parquet file from S3 using pandas.
         
@@ -227,10 +245,69 @@ class AWSFileReader:
             **kwargs: Additional arguments to pass to pandas.read_parquet()
         """
         try:
-            s3_path = f"s3://{bucket}/{key}"
+            path = path.strip("s3://")
+            s3_path = f"s3://{path}"
             return pd.read_excel(s3_path, engine="openpyxl", **kwargs)
         except Exception as FileNotFoundError:
-            raise FileNotFoundError(f"No Parquet files found in s3://{bucket}/{key}")
+            raise FileNotFoundError(f"No Parquet files found in {s3_path}")
+    
+
+    def to_any(self, buffer: BytesIO, path: str) -> None:
+
+        bucket, key = self.split_bucket_key(path)
+        self.s3_client.upload_fileobj(
+            Fileobj=buffer,
+            Bucket=bucket,
+            Key=key,
+        )
+
+
+    def to_parquet(self, df: pd.DataFrame, path: str, **kwargs):
+        """
+        Save a Parquet file in S3.
+        
+        Args:
+            df: DataFrame to be saved
+            filepath: S3 URI of the Parquet file (e.g., 's3://bucket/key')
+            **kwargs: Additional arguments to pass to pandas.read_parquet()
+        """
+        buffer = BytesIO()
+        df.to_parquet(buffer, **kwargs)
+        buffer.seek(0)
+
+        self.to_any(buffer, path)
+    
+
+    def to_csv(self, df: pd.DataFrame, path: str, encoding="utf-8", **kwargs):
+        """
+        Save a csv file in S3.
+
+        Args:
+            df: DataFrame to be saved
+            filepath: S3 URI of the Parquet file (e.g., 's3://bucket/key')
+            **kwargs: Additional arguments to pass to pandas.read_parquet()
+        """
+        buffer = BytesIO()
+        df.to_csv(buffer, encoding=encoding, **kwargs)
+        buffer.seek(0)
+
+        self.to_any(buffer, path)
+    
+
+    def to_excel(self, df: pd.DataFrame, path: str, **kwargs):
+        """
+        Save a excel file in S3.
+        
+        Args:
+            df: DataFrame to be saved
+            filepath: S3 URI of the Parquet file (e.g., 's3://bucket/key')
+            **kwargs: Additional arguments to pass to pandas.read_parquet()
+        """
+        buffer = BytesIO()
+        df.to_excel(buffer, **kwargs)
+        buffer.seek(0)
+
+        self.to_any(buffer, path)
 
 
     def download_file(
@@ -272,7 +349,7 @@ class AWSFileReader:
             ResultConfiguration={'OutputLocation': s3_output}
         )
         qid = execution['QueryExecutionId']
-        print(f"🚀 Query enviada! ExecutionId: {qid}. Aguardando...")
+        logger.info(f"🚀 Query sent! ExecutionId: {qid}. Running...")
 
         while True:
             execution = self.athena_client.get_query_execution(QueryExecutionId=qid)
@@ -288,10 +365,11 @@ class AWSFileReader:
             data_rows = result['ResultSet']['Rows'][1:]
             rows = [[col.get('VarCharValue','') for col in r['Data']] for r in data_rows]
             df = pd.DataFrame(rows, columns=headers)
-            print(tabulate(df, headers=headers, tablefmt="grid", showindex=False))
+
             return df
+
         else:
-            print(f"❌ Query finalizada com status: {status}")
+            logger.error(f"❌ Query finalizada com status: {status}")
             if status == 'FAILED':
                 error_info = execution['QueryExecution']['Status'].get('StateChangeReason', 'Erro desconhecido')
-                print(f"Detalhes do erro: {error_info}")
+                logger.warning(f"Detalhes do erro: {error_info}")
