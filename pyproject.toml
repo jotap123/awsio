@@ -9,7 +9,6 @@ description = "Utilities library for read/write operations and general data clea
 authors = [
   { name="João Pedro Alves", email="jotapedro1997@gmail.com" },
 ]
-{% if cookiecutter.open_source_license != 'No license file' %}license = { file = "LICENSE" }{% endif %}
 readme = "README.md"
 classifiers = [
     "Programming Language :: Python :: 3.9",
@@ -17,7 +16,6 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Development Status :: 3 - Alpha",
 ]

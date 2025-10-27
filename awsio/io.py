@@ -8,6 +8,8 @@ from tabulate import tabulate
 from typing import Optional, Union
 from botocore.exceptions import ClientError, NoCredentialsError
 
+from awsio.auth import authentication
+
 
 class AWSFileReader:
     """
@@ -50,13 +52,42 @@ class AWSFileReader:
             profile_name: AWS profile name from credentials file (optional)
         """
         self.region_name = os.getenv('AWS_REGION', 'us-east-1')
-        
-        if profile_name:
-            # Use named profile from credentials file
-            self.session = boto3.Session(
-                profile_name=profile_name,
+        sso_oidc = boto3.client('sso-oidc', region_name=self.region_name)
+
+        def authenticate(sso_oidc, use_cache=True):
+            sso_oidc = boto3.client('sso-oidc', region_name=self.region_name)
+            access_token = authentication(sso_oidc, use_cache)
+
+            # Obter credenciais da role fixa
+            sso = boto3.client('sso', region_name=self.region_name)
+            try:
+                creds = sso.get_role_credentials(
+                    accountId=os.getenv('ACCOUNT_ID', ''),
+                    roleName=os.getenv('ROLE_NAME', ''),
+                    accessToken=access_token
+                )['roleCredentials']
+            except Exception as e:
+                print(f"❌ Erro ao obter credenciais: {e}")
+                return
+
+            # Executar query no Athena
+            session = boto3.Session(
+                aws_access_key_id=creds['accessKeyId'],
+                aws_secret_access_key=creds['secretAccessKey'],
+                aws_session_token=creds['sessionToken'],
                 region_name=self.region_name
             )
+            return session
+        
+        if profile_name:
+            if profile_name == 'dev':
+                self.session = authenticate(sso_oidc)
+            else:
+                # Use named profile from credentials file
+                self.session = boto3.Session(
+                    profile_name=profile_name,
+                    region_name=self.region_name
+                )
         elif aws_secrets:
             # Use explicit credentials
             self.session = boto3.Session(
@@ -258,6 +289,7 @@ class AWSFileReader:
             rows = [[col.get('VarCharValue','') for col in r['Data']] for r in data_rows]
             df = pd.DataFrame(rows, columns=headers)
             print(tabulate(df, headers=headers, tablefmt="grid", showindex=False))
+            return df
         else:
             print(f"❌ Query finalizada com status: {status}")
             if status == 'FAILED':
