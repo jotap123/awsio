@@ -1,3 +1,8 @@
+"""SSO OIDC helper functions used to obtain short-lived access tokens.
+
+Provides a tiny cache layer and a device-code authorization flow that interacts
+with AWS SSO OIDC service.
+"""
 import os
 import json
 import time
@@ -9,6 +14,12 @@ from awsio.config import CACHE_FILE
 
 
 def load_cache():
+    """
+    Load the token cache from disk.
+
+    Returns:
+        dict: Parsed cache content or empty dict if file missing or invalid.
+    """
     if os.path.isfile(CACHE_FILE):
         try:
             with open(CACHE_FILE, 'r') as f:
@@ -19,12 +30,37 @@ def load_cache():
 
 
 def save_cache(data):
+    """
+    Save token/cache data to disk.
+
+    Args:
+        data (dict): Data to persist (e.g., {'access_token': str, 'expires_at': isoformat_str}).
+    """
     os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
     with open(CACHE_FILE, 'w') as f:
         json.dump(data, f)
 
 
 def authentication(sso_oidc, use_cache=True):
+    """
+    Perform device-flow authentication against AWS SSO OIDC and return an access token.
+
+    This function will:
+      - Read a cached token if available and not expired (when use_cache=True).
+      - Run the device authorization flow, opening the verification URL in the user's browser.
+      - Poll the sso-oidc service until the token is available or a timeout occurs.
+      - Cache the token (when use_cache=True).
+
+    Args:
+        sso_oidc (boto3 sso-oidc client): Pre-created boto3 client for the sso-oidc service.
+        use_cache (bool): Whether to attempt using and updating the local cache.
+
+    Returns:
+        str: The access token string.
+
+    Raises:
+        Exception: For authentication failures or timeouts.
+    """
     try:
         now = datetime.now(timezone.utc)
 

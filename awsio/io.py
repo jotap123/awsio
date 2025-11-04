@@ -5,17 +5,23 @@ import boto3
 import logging
 import pandas as pd
 
-from io import BytesIO
 from typing import Optional, Union
 from botocore.exceptions import ClientError, NoCredentialsError
 
 from awsio.auth import authentication
+from awsio.path import split_bucket_key
 
 logger = logging.getLogger(__name__)
 
 
 class AWSio:
     """
+    High-level convenience wrapper for common AWS IO operations.
+
+    The class centralizes session creation (supporting profiles, explicit credentials,
+    environment defaults and an SSO device-flow for a 'dev' profile) and provides
+    utility methods to read S3 objects, download files and run Athena queries.
+    
     A flexible AWS file reader that supports multiple authentication methods:
     1. IAM Role (when running on EC2, ECS, Lambda, etc.)
     2. AWS credentials file (~/.aws/credentials)
@@ -107,6 +113,30 @@ class AWSio:
         self.athena_client = self.session.client('athena')
     
 
+    @staticmethod
+    def s3_file_exists(path, s3_client=None):
+        """
+        Check whether a file exists in S3.
+
+        Args:
+            path (str): S3 URI (e.g., 's3://bucket/key' or 'bucket/key' is allowed).
+            s3_client (boto3.client, optional): S3 client to use. If None, a new client is created.
+
+        Returns:
+            bool: True if the object exists, False otherwise.
+        """
+        if s3_client is None:
+            s3_client = boto3.client('s3')
+        
+        bucket, key = split_bucket_key(path, type="file")
+
+        try:
+            s3_client.head_object(Bucket=bucket, Key=key)
+            return True
+        except Exception:
+            return False
+
+
     def read_s3_file(
         self,
         bucket: str,
@@ -114,15 +144,19 @@ class AWSio:
         encoding: str = 'utf-8'
     ) -> Union[str, bytes]:
         """
-        Read a file from S3.
-        
+        Read an object from S3 and return its contents.
+
         Args:
-            bucket: S3 bucket name
-            key: S3 object key (file path)
-            encoding: Text encoding (use None for binary data)
-        
+            bucket (str): S3 bucket name.
+            key (str): S3 object key (path inside bucket).
+            encoding (str or None): If a string, decode bytes using this encoding and return str.
+                If None, return raw bytes.
+
         Returns:
-            File contents as string (if encoding specified) or bytes
+            str or bytes: File content.
+
+        Raises:
+            FileNotFoundError, ValueError, PermissionError, Exception on AWS-related errors.
         """
         try:
             response = self.s3_client.get_object(Bucket=bucket, Key=key)
@@ -151,163 +185,9 @@ class AWSio:
 
 
     def read_json_from_s3(self, bucket: str, key: str) -> dict:
-        """Read and parse a JSON file from S3."""
+        """Read an S3 object and parse it as JSON."""
         content = self.read_s3_file(bucket, key)
         return json.loads(content)
-
-
-    def list_s3_files(
-        self,
-        bucket: str,
-        file_extension: str,
-        prefix: str = '',
-        max_keys: Optional[int] = None
-    ) -> list:
-        """
-        List files in an S3 bucket with optional prefix.
-        
-        Args:
-            bucket: S3 bucket name
-            prefix: Prefix to filter objects (e.g., 'data/')
-            file_extension: File extension to filter (e.g., '.csv', '.parquet')
-            max_keys: Maximum number of keys to return
-        
-        Returns:
-            List of object keys
-        """
-        try:
-            response = self.s3_client.list_objects_v2(
-                Bucket=bucket,
-                Prefix=prefix,
-                MaxKeys=max_keys
-            )
-            
-            if 'Contents' not in response:
-                return []
-            
-            return [obj['Key'] for obj in response['Contents'] if obj['Key'].endswith(file_extension)]
-
-        except ClientError as e:
-            raise Exception(f"Error listing S3 files: {e}")
-    
-
-    def split_bucket_key(self, s3_uri: str) -> tuple:
-        """
-        Split an S3 URI into bucket and key.
-        
-        Args:
-            s3_uri: S3 URI (e.g., 's3://bucket/key')
-        """
-        path = s3_uri.strip("s3://")  
-
-        bucket, key = path.split('/', 1)
-        return bucket, key
-
-
-    def read_parquet(self, path: str, **kwargs):
-        """
-        Read a Parquet file from S3 using pandas.
-        
-        Args:
-            filepath: S3 URI of the Parquet file (e.g., 's3://bucket/key')
-            **kwargs: Additional arguments to pass to pandas.read_parquet()
-        """
-        try:
-            path = path.strip("s3://")
-            s3_path = f"s3://{path}"
-            return pd.read_parquet(s3_path, **kwargs)
-        except Exception as FileNotFoundError:
-            raise FileNotFoundError(f"No Parquet files found in {s3_path}")
-    
-
-    def read_csv(self, path: str, **kwargs):
-        """
-        Read a Parquet file from S3 using pandas.
-        
-        Args:
-            filepath: S3 URI of the Parquet file (e.g., 's3://bucket/key')
-            **kwargs: Additional arguments to pass to pandas.read_parquet()
-        """
-        try:
-            path = path.strip("s3://")
-            s3_path = f"s3://{path}"
-            return pd.read_csv(s3_path, **kwargs)
-        except Exception as FileNotFoundError:
-            raise FileNotFoundError(f"No Parquet files found in {s3_path}")
-    
-
-    def read_excel(self, path: str, **kwargs):
-        """
-        Read a Parquet file from S3 using pandas.
-        
-        Args:
-            filepath: S3 URI of the Parquet file (e.g., 's3://bucket/key')
-            **kwargs: Additional arguments to pass to pandas.read_parquet()
-        """
-        try:
-            path = path.strip("s3://")
-            s3_path = f"s3://{path}"
-            return pd.read_excel(s3_path, engine="openpyxl", **kwargs)
-        except Exception as FileNotFoundError:
-            raise FileNotFoundError(f"No Parquet files found in {s3_path}")
-    
-
-    def to_any(self, buffer: BytesIO, path: str) -> None:
-
-        bucket, key = self.split_bucket_key(path)
-        self.s3_client.upload_fileobj(
-            Fileobj=buffer,
-            Bucket=bucket,
-            Key=key,
-        )
-
-
-    def to_parquet(self, df: pd.DataFrame, path: str, **kwargs):
-        """
-        Save a Parquet file in S3.
-        
-        Args:
-            df: DataFrame to be saved
-            filepath: S3 URI of the Parquet file (e.g., 's3://bucket/key')
-            **kwargs: Additional arguments to pass to pandas.read_parquet()
-        """
-        buffer = BytesIO()
-        df.to_parquet(buffer, **kwargs)
-        buffer.seek(0)
-
-        self.to_any(buffer, path)
-    
-
-    def to_csv(self, df: pd.DataFrame, path: str, encoding="utf-8", **kwargs):
-        """
-        Save a csv file in S3.
-
-        Args:
-            df: DataFrame to be saved
-            filepath: S3 URI of the Parquet file (e.g., 's3://bucket/key')
-            **kwargs: Additional arguments to pass to pandas.read_parquet()
-        """
-        buffer = BytesIO()
-        df.to_csv(buffer, encoding=encoding, **kwargs)
-        buffer.seek(0)
-
-        self.to_any(buffer, path)
-    
-
-    def to_excel(self, df: pd.DataFrame, path: str, **kwargs):
-        """
-        Save a excel file in S3.
-        
-        Args:
-            df: DataFrame to be saved
-            filepath: S3 URI of the Parquet file (e.g., 's3://bucket/key')
-            **kwargs: Additional arguments to pass to pandas.read_parquet()
-        """
-        buffer = BytesIO()
-        df.to_excel(buffer, **kwargs)
-        buffer.seek(0)
-
-        self.to_any(buffer, path)
 
 
     def download_file(
@@ -337,13 +217,21 @@ class AWSio:
     ) -> pd.DataFrame:
         """
         Execute an Athena query and return results as a pandas DataFrame.
-        
-        Args:
-            query: SQL query string
-            s3_output: S3 location for query results (e.g., 's3://my-bucket/query-results/')
-            database: Athena database name (optional)
-        """
 
+        The method starts the query, polls until completion and then reads the
+        returned rows into a DataFrame. Note: for large result sets consider
+        using the query ResultConfiguration and awswrangler for streaming reads.
+
+        Args:
+            query (str): SQL query to run.
+            s3_output (str): S3 location for Athena query results (e.g. 's3://bucket/prefix/').
+
+        Returns:
+            pd.DataFrame: Query results as a DataFrame when the query succeeds.
+
+        Raises:
+            RuntimeError or logs errors when query fails or is cancelled.
+        """
         execution = self.athena_client.start_query_execution(
             QueryString=query,
             ResultConfiguration={'OutputLocation': s3_output}

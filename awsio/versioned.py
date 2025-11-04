@@ -1,8 +1,64 @@
+import re
+import boto3
 import pandas as pd
+import awswrangler as wr
 
-from awsio.io import AWSFileReader as io
-from awsio.path import get_date_from_names
+from awsio.path import get_date_from_names, path_join, list_s3_files, split_bucket_key
 from awsio.parallelism import applyParallel
+
+
+def load_history(path: str, min_date="2020-01-01", path_type="folder", s3_client=None, **kwargs):
+    """
+    Load and concatenate historical files from an S3 path filtered by date token.
+
+    The function scans files under `path`, looks for a YYYYMM token inside each filename,
+    filters files with token >= min_date, then reads and concatenates them (using awswrangler).
+
+    Args:
+        path (str): S3 path to scan (file or folder).
+        min_date (str or datetime-like): Minimum date threshold (inclusive). Files whose
+            embedded YYYYMM token is earlier than this will be ignored.
+        path_type (str): 'file' or 'folder' passed to split_bucket_key.
+        s3_client (boto3.client or None): S3 client to use. A client is created if None.
+        **kwargs: Additional kwargs forwarded to wr.s3.read_parquet.
+
+    Returns:
+        pd.DataFrame: Concatenated DataFrame of selected parquet files. Empty DataFrame
+        is returned if no files match.
+    """
+    if s3_client is None:
+        s3_client = boto3.client('s3')
+
+    bucket, key = split_bucket_key(path, type=path_type)
+
+    # list all file keys under the provided path
+    all_files = list_s3_files(path, s3_client)
+
+    selected_files = []
+    for key in all_files:
+        # extract filename and YYYYMM token (e.g. file_202501.parquet -> 202501)
+        filename = key.split("/")[-1]
+        m = re.search(r'(\d{6})', filename)
+        if not m:
+            # skip files without a YYYYMM token
+            continue
+
+        file_date = pd.to_datetime(m.group(1), format="%Y%m")
+
+        if file_date >= pd.to_datetime(min_date):
+            selected_files.append(key)
+
+    # if no files selected return empty dataframe
+    if not selected_files:
+        return pd.DataFrame()
+
+    df = pd.concat([
+        wr.s3.read_parquet(
+            path_join(bucket, file), **kwargs
+        ) for file in selected_files
+    ], ignore_index=True)
+
+    return df
 
 
 def extract_file(
@@ -14,11 +70,28 @@ def extract_file(
     errors="raise",
     **kwargs,
 ):
+    """
+    Read a single file (or apply a custom reader) and optionally add an origin column.
+
+    Args:
+        x (pd.DataFrame or Series): A one-row structure with column 'directory' containing
+            the file path to read.
+        file_format (str): Expected format key: 'parquet', 'csv', 'excel', or any custom.
+        verbose (int): Verbosity (>0 prints what is being read).
+        file_func (callable): Post-read transformation function applied to the DataFrame
+            or alternative custom loader when file_format is not one of the known types.
+        keep_origin_col (bool): If True, adds an 'origin' column with the source path.
+        errors (str): 'raise' to re-raise exceptions, 'ignore' to return empty DataFrame on error.
+        **kwargs: Forwarded to the selected reading function (e.g. read_csv sep).
+
+    Returns:
+        pd.DataFrame: The read (and transformed) DataFrame or an empty DataFrame when errors='ignore'.
+    """
 
     if verbose > 0:
         print(f"Reading {x['directory'].values[0]}")
 
-    dict = {"parquet": io.read_parquet, "excel": io.read_excel, "csv": io.read_csv}
+    dict = {"parquet": wr.s3.read_parquet, "excel": wr.s3.read_excel, "csv": wr.s3.read_csv}
 
     if file_format in list(dict.keys()):
         func = dict[file_format]
@@ -52,7 +125,7 @@ def extract_file(
 def parallel_read(
     base_folder,
     file_format="parquet",
-    min_date="2000-01-01",
+    min_date="2020-01-01",
     last_layer="folder",
     max_date="2099-12-31",
     verbose=0,
@@ -65,32 +138,27 @@ def parallel_read(
     **kwargs,
 ):
     """
-    Function that allows recursively navigating within a folder system
-    divided into years, months, and days and concatenates the navigated files.
-    It allows for the implementation of incremental logic based on the min_date parameter.
+    Recursively find files under a base folder and read them in parallel.
+
+    This helper navigates folder systems (year/month/day or encoded dates in filenames),
+    filters files between min_date and max_date, and reads them in parallel using applyParallel.
 
     Args:
-        base_folder (str): Root directory (preferably containing years, months, and days)
-        min_date (str): Desired minimum date
-        file_format (str): Type of file to be read in the folder. Parquet, CSV, or Excel.
-        last_layer (str): Last layer of folders. Can be year, month, or day.
-        max_date (str): Desired maximum date
-        verbose (int): Code verbosity level.
-            Above zero, prints entries in folders
-        n_jobs (int): Maximum number of jobs to be used in parallelizing reading
-        file_func (func): Function to be applied at the time of reading
-        date_sep (str): Date separator in folders with files with dates in the name
-        occ (int): Occurrence of the split where the date is located in case of folder
-        keep_origin_col (bool): Whether or not to keep the original directory column name
-        errors (str): Can be 'raise' (breaks code when error occurs)
-            or 'ignore' (continues with empty dataframe)
-        mode (str): Reading mode. Can be 'read' to read the file
-            or 'rename' to rename the file
-        **kwargs: Arguments to be passed in read_any (e.g., sep for read_csv)
+        base_folder (str): S3 base path where files live (can include s3://).
+        file_format (str): File type to read, e.g. 'parquet', 'csv', 'excel'.
+        min_date, max_date (str/datetime-like): Date window to include.
+        last_layer (str): 'folder', 'month', or 'day' indicating how to extract dates.
+        verbose (int): Verbosity level.
+        n_jobs (int): Number of parallel jobs for reading.
+        file_func (callable): Transformation function applied to each read DataFrame.
+        date_sep (str): Separator used when extracting dates from filenames.
+        occ (int): Index for path segment when extracting dates from filename.
+        keep_origin_col (bool): If True, keep a column indicating source directory.
+        errors (str): Error behaviour ('raise' or 'ignore').
+        **kwargs: Additional kwargs forwarded to file readers.
 
     Returns:
-        pd.DataFrame: Final concatenated DataFrame with all the files that were navigated
-
+        pd.DataFrame or None: Concatenated DataFrame of all read files (or None if none found).
     """
     min_date = pd.to_datetime(min_date)
     max_date = pd.to_datetime(max_date)
@@ -99,7 +167,7 @@ def parallel_read(
 
     extension = file_format if file_format != "excel" else "xls"
 
-    list_folders = [col for col in io.list_s3_files(base_folder) if f".{extension}" in col]
+    list_folders = [col for col in list_s3_files(base_folder) if f".{extension}" in col]
 
     start = -2
     date_format = "%Y"
