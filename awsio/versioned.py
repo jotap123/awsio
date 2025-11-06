@@ -3,11 +3,11 @@ import boto3
 import pandas as pd
 import awswrangler as wr
 
-from awsio.path import get_date_from_names, path_join, list_s3_files, split_bucket_key
+from awsio.path import get_date_from_filenames, path_join, list_s3_files, split_bucket_key
 from awsio.parallelism import applyParallel
 
 
-def load_history(path: str, min_date="2020-01-01", path_type="folder", s3_client=None, **kwargs):
+def load_history(path: str, min_date="2020-01-01", s3_client=None, **kwargs):
     """
     Load and concatenate historical files from an S3 path filtered by date token.
 
@@ -29,8 +29,6 @@ def load_history(path: str, min_date="2020-01-01", path_type="folder", s3_client
     if s3_client is None:
         s3_client = boto3.client('s3')
 
-    bucket, key = split_bucket_key(path, type=path_type)
-
     # list all file keys under the provided path
     all_files = list_s3_files(path, s3_client)
 
@@ -38,12 +36,16 @@ def load_history(path: str, min_date="2020-01-01", path_type="folder", s3_client
     for key in all_files:
         # extract filename and YYYYMM token (e.g. file_202501.parquet -> 202501)
         filename = key.split("/")[-1]
-        m = re.search(r'(\d{6})', filename)
-        if not m:
+        ym = re.search(r'(\d{6})', filename)
+        y = re.search(r'(\d{4})', filename)
+        if not ym and not y:
             # skip files without a YYYYMM token
             continue
 
-        file_date = pd.to_datetime(m.group(1), format="%Y%m")
+        if ym:
+            file_date = pd.to_datetime(ym.group(1), format="%Y%m")
+        elif y:
+            file_date = pd.to_datetime(y.group(1), format="%Y")
 
         if file_date >= pd.to_datetime(min_date):
             selected_files.append(key)
@@ -53,9 +55,8 @@ def load_history(path: str, min_date="2020-01-01", path_type="folder", s3_client
         return pd.DataFrame()
 
     df = pd.concat([
-        wr.s3.read_parquet(
-            path_join(bucket, file), **kwargs
-        ) for file in selected_files
+        wr.s3.read_parquet(file, **kwargs)
+        for file in selected_files
     ], ignore_index=True)
 
     return df
@@ -131,7 +132,7 @@ def parallel_read(
     verbose=0,
     n_jobs=-1,
     file_func=lambda x: x,
-    date_sep="-",
+    date_sep="",
     occ=-1,
     keep_origin_col=False,
     errors="raise",
@@ -163,8 +164,6 @@ def parallel_read(
     min_date = pd.to_datetime(min_date)
     max_date = pd.to_datetime(max_date)
 
-    base_folder = "/".join(base_folder.strip("s3://").split('/')[:-1])
-
     extension = file_format if file_format != "excel" else "xls"
 
     list_folders = [col for col in list_s3_files(base_folder) if f".{extension}" in col]
@@ -194,7 +193,7 @@ def parallel_read(
 
     else:
         try:
-            df_folders["date"] = get_date_from_names(
+            df_folders["date"] = get_date_from_filenames(
                 df_folders["directory"], sep=date_sep, occ=occ
             )
             df_folders = df_folders.loc[df_folders["date"].between(min_date, max_date)]

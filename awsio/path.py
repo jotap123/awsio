@@ -6,14 +6,52 @@ Provides simple utilities to:
  - split s3:// URIs into bucket and key,
  - list files under a prefix using a boto3 client.
 """
-
 import re
+import boto3
 import pandas as pd
 
 
 def path_join(*args, sep="/"):
     """Concatenate path segments using the provided separator and return the joined string."""
     return f"{sep}".join([*args])
+
+
+def get_date_from_filenames(names_list, sep="", occ=-1):
+    """
+    Extract dates (YYYY, YYYYMM, or YYYYMMDD) from a list of filenames.
+
+    Args:
+        names_list (Iterable[str]): List of filenames or paths.
+        sep (str): Separator used in the filename date token (default '').
+        occ (int): When splitting path by '/', index to inspect for the filename (default -1).
+
+    Returns:
+        pd.DatetimeIndex: Parsed dates.
+    """
+    result_list = []
+    for item in names_list:
+        filename = item.split("/")[occ]
+        if sep == "_":
+            match = re.search(r"\d{4}_?\d{2}_?\d{2}?", filename)
+        elif sep == "-":
+            match = re.search(r"\d{4}-?\d{2}-?\d{2}?", filename)
+        elif sep == "/":
+            match = re.search(r"\d{4}/?\d{2}/?\d{2}?", filename)
+        elif sep == "":
+            match = re.search(r"\d{4}\d{2}?\d{2}?", filename)
+        else:
+            raise ValueError("Date format not supported")
+
+        if match:
+            date_str = match.group().replace(sep, "")
+            if len(date_str) == 4:
+                result_list.append(pd.to_datetime(date_str, format="%Y"))
+            elif len(date_str) == 6:
+                result_list.append(pd.to_datetime(date_str, format=f"%Y{sep}%m"))
+            elif len(date_str) == 8:
+                result_list.append(pd.to_datetime(date_str, format=f"%Y{sep}%m{sep}%d"))
+
+    return pd.to_datetime(result_list)
 
 
 def get_year_month_from_names(names_list, sep="", occ=-1):
@@ -92,7 +130,7 @@ def get_date_from_names(names_list, sep="_", occ=-1):
         raise "Date format not supported"
 
 
-def split_bucket_key(s3_uri: str, type: str) -> tuple:
+def split_bucket_key(s3_uri: str, type: str = "folder") -> tuple:
     """
     Split S3 URI into (bucket, key) tuple.
 
@@ -118,7 +156,7 @@ def split_bucket_key(s3_uri: str, type: str) -> tuple:
         raise ValueError("type must be either 'file' or 'folder'")
 
 
-def list_s3_files(path, s3_client):
+def list_s3_files(path, s3_client=None):
     """
     List object keys under a given S3 prefix.
 
@@ -129,8 +167,12 @@ def list_s3_files(path, s3_client):
     Returns:
         list[str]: List of object keys (not full s3:// URIs). Empty list when no objects found.
     """
+    if s3_client is None:
+        s3_client = boto3.client('s3')
+
     if re.search("[*]", path):
         suffix = path.split("*")[-1]
+        filename = path.split("*")[0].split("/")[-1]
         path = "/".join(path.split("/")[:-1])
     else:
         suffix = None
@@ -147,8 +189,24 @@ def list_s3_files(path, s3_client):
         for content in files['Contents']:
             list_files.append(content['Key'])
 
-        if suffix:
-            final_files = [file for file in list_files if re.search(suffix, file) is not None]
+        if suffix and filename not in ["*", ""]:
+            fname_files = [
+                path_join("s3:/", bucket, file)
+                for file in list_files
+                if re.search(filename, file) is not None
+            ]
+            final_files = [
+                file for file in fname_files
+                if file.endswith(suffix)
+            ]
+            return final_files
+
+        elif suffix:
+            final_files = [
+                path_join("s3:/", bucket, file)
+                for file in list_files
+                if file.endswith(suffix)
+            ]
             return final_files
 
     except KeyError:
