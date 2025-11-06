@@ -129,6 +129,12 @@ def list_s3_files(path, s3_client):
     Returns:
         list[str]: List of object keys (not full s3:// URIs). Empty list when no objects found.
     """
+    if re.search("[*]", path):
+        suffix = path.split("*")[-1]
+        path = "/".join(path.split("/")[:-1])
+    else:
+        suffix = None
+
     bucket, key = split_bucket_key(path, type="folder")
     files = s3_client.list_objects_v2(
         Bucket=bucket,
@@ -140,9 +146,12 @@ def list_s3_files(path, s3_client):
     try:
         for content in files['Contents']:
             list_files.append(content['Key'])
-    
+
+        if suffix:
+            final_files = [file for file in list_files if re.search(suffix, file) is not None]
+            return final_files
+
     except KeyError:
         print(f"No files found in {path}")
-        return list_files
 
     return list_files
