@@ -127,7 +127,6 @@ def parallel_read(
     base_folder,
     file_format="parquet",
     min_date="2020-01-01",
-    last_layer="folder",
     max_date="2099-12-31",
     verbose=0,
     n_jobs=-1,
@@ -166,42 +165,17 @@ def parallel_read(
 
     extension = file_format if file_format != "excel" else "xls"
 
-    list_folders = [col for col in list_s3_files(base_folder) if f".{extension}" in col]
+    list_files = [col for col in list_s3_files(base_folder) if f".{extension}" in col]
+    dates = get_date_from_filenames(list_files, sep=date_sep, occ=occ)
 
-    start = -2
-    date_format = "%Y"
+    final_files = [
+        list_files[i] for i in range(len(dates))
+        if (dates[i] >= pd.to_datetime(min_date)) and (dates[i] <= pd.to_datetime(max_date))
+    ]
 
-    if last_layer == "day":
-        start = -4
-        date_format = "%Y/%m/%d"
-    elif last_layer == "month":
-        start = -3
-        date_format = "%Y/%m"
-
-    df_folders = pd.DataFrame(list_folders, columns=["directory"])
-    df_folders["file_name"] = df_folders["directory"].str.split("/").str.get(-1)
-
-    if last_layer != "folder":
-        df_folders["date"] = pd.to_datetime(
-            df_folders["directory"]
-            .str.split("/")
-            .str.slice(start=start, stop=-1)
-            .str.join("/"),
-            format=date_format,
-        )
-        df_folders = df_folders.loc[df_folders["date"].between(min_date, max_date)]
-
-    else:
-        try:
-            df_folders["date"] = get_date_from_filenames(
-                df_folders["directory"], sep=date_sep, occ=occ
-            )
-            df_folders = df_folders.loc[df_folders["date"].between(min_date, max_date)]
-        except:
-            pass
+    df_folders = pd.DataFrame(final_files, columns=["directory"])
 
     df = None
-
     if len(df_folders) == 1:
         df = extract_file(
             df_folders,

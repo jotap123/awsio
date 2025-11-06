@@ -32,13 +32,13 @@ def get_date_from_filenames(names_list, sep="", occ=-1):
     for item in names_list:
         filename = item.split("/")[occ]
         if sep == "_":
-            match = re.search(r"\d{4}_?\d{2}_?\d{2}?", filename)
+            match = re.search(r"\d{4}(?:_\d{2})?(?:_\d{2})?", filename)
         elif sep == "-":
-            match = re.search(r"\d{4}-?\d{2}-?\d{2}?", filename)
+            match = re.search(r"\d{4}(?:-\d{2})?(?:-\d{2})?", filename)
         elif sep == "/":
-            match = re.search(r"\d{4}/?\d{2}/?\d{2}?", filename)
+            match = re.search(r"\d{4}(?:/\d{2})?(?:/\d{2})?", filename)
         elif sep == "":
-            match = re.search(r"\d{4}\d{2}?\d{2}?", filename)
+            match = re.search(r"\d{4}(\d{2})?(\d{2})?", filename)
         else:
             raise ValueError("Date format not supported")
 
