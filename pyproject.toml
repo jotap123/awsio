@@ -4,14 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "awsio"
-version = "0.0.1"
+version = "0.1"
 description = "Utilities library for read/write operations and general data cleaning routines"
 authors = [
   { name="João Pedro Alves", email="jotapedro1997@gmail.com" },
 ]
 readme = "README.md"
 classifiers = [
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -19,7 +18,7 @@ classifiers = [
     "Operating System :: OS Independent",
     "Development Status :: 4 - Beta",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
