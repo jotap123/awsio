@@ -20,6 +20,10 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 
+[tool.setuptools.packages.find]
+include = ["awsio*"] # Glob patterns for packages to include
+exclude = ["notebooks*", "awsio.egg-info*"] # Glob patterns for packages/directories to exclude
+
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
 
