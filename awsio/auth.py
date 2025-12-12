@@ -6,7 +6,6 @@ with AWS SSO OIDC service.
 import os
 import json
 import time
-import boto3
 import webbrowser
 
 from datetime import datetime, timezone, timedelta

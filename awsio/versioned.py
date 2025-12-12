@@ -3,7 +3,7 @@ import boto3
 import pandas as pd
 import awswrangler as wr
 
-from awsio.path import get_date_from_filenames, path_join, list_s3_files, split_bucket_key
+from awsio.path import get_date_from_filenames, list_s3_files
 from awsio.parallelism import applyParallel
 
 
@@ -113,7 +113,8 @@ def extract_file(
         **kwargs: Forwarded to the selected reading function (e.g. read_csv sep).
 
     Returns:
-        pd.DataFrame: The read (and transformed) DataFrame or an empty DataFrame when errors='ignore'.
+        pd.DataFrame: The read (and transformed) DataFrame or an empty DataFrame
+        when errors='ignore'.
     """
 
     if verbose > 0:
