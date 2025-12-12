@@ -4,6 +4,7 @@ This module provides applyParallel which parallelizes pandas groupby.apply-like
 work using joblib. It supports plot mode (where an axis may be provided per group),
 different backends and optional concatenation of results.
 """
+
 import pandas as pd
 from joblib import Parallel, delayed
 

@@ -1,10 +1,11 @@
 import re
+
+import awswrangler as wr
 import boto3
 import pandas as pd
-import awswrangler as wr
 
-from awsio.path import get_date_from_filenames, list_s3_files
 from awsio.parallelism import applyParallel
+from awsio.path import get_date_from_filenames, list_s3_files
 
 
 def load_history(path: str, min_date="2020-01-01", s3_client=None, **kwargs):
@@ -27,7 +28,7 @@ def load_history(path: str, min_date="2020-01-01", s3_client=None, **kwargs):
         is returned if no files match.
     """
     if s3_client is None:
-        s3_client = boto3.client('s3')
+        s3_client = boto3.client("s3")
 
     # list all file keys under the provided path
     all_files = list_s3_files(path, s3_client)
@@ -36,8 +37,8 @@ def load_history(path: str, min_date="2020-01-01", s3_client=None, **kwargs):
     for key in all_files:
         # extract filename and YYYYMM token (e.g. file_202501.parquet -> 202501)
         filename = key.split("/")[-1]
-        ym = re.search(r'(\d{6})', filename)
-        y = re.search(r'(\d{4})', filename)
+        ym = re.search(r"(\d{6})", filename)
+        y = re.search(r"(\d{4})", filename)
         if not ym and not y:
             # skip files without a YYYYMM token
             continue
@@ -54,10 +55,10 @@ def load_history(path: str, min_date="2020-01-01", s3_client=None, **kwargs):
     if not selected_files:
         return pd.DataFrame()
 
-    df = pd.concat([
-        wr.s3.read_parquet(file, **kwargs)
-        for file in selected_files
-    ], ignore_index=True)
+    df = pd.concat(
+        [wr.s3.read_parquet(file, **kwargs) for file in selected_files],
+        ignore_index=True,
+    )
 
     return df
 
@@ -120,7 +121,11 @@ def extract_file(
     if verbose > 0:
         print(f"Reading {x['directory'].values[0]}")
 
-    dict = {"parquet": wr.s3.read_parquet, "excel": wr.s3.read_excel, "csv": wr.s3.read_csv}
+    dict = {
+        "parquet": wr.s3.read_parquet,
+        "excel": wr.s3.read_excel,
+        "csv": wr.s3.read_csv,
+    }
 
     if file_format in list(dict.keys()):
         func = dict[file_format]
@@ -197,8 +202,10 @@ def parallel_read(
     dates = get_date_from_filenames(list_files, sep=date_sep, occ=occ)
 
     final_files = [
-        list_files[i] for i in range(len(dates))
-        if (dates[i] >= pd.to_datetime(min_date)) and (dates[i] <= pd.to_datetime(max_date))
+        list_files[i]
+        for i in range(len(dates))
+        if (dates[i] >= pd.to_datetime(min_date))
+        and (dates[i] <= pd.to_datetime(max_date))
     ]
 
     df_folders = pd.DataFrame(final_files, columns=["directory"])

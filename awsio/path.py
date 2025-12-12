@@ -6,7 +6,9 @@ Provides simple utilities to:
  - split s3:// URIs into bucket and key,
  - list files under a prefix using a boto3 client.
 """
+
 import re
+
 import boto3
 import pandas as pd
 
@@ -144,9 +146,9 @@ def split_bucket_key(s3_uri: str, type: str = "folder") -> tuple:
     Raises:
         ValueError: If type is not 'file' or 'folder'.
     """
-    path = s3_uri.strip("s3://")  
+    path = s3_uri.strip("s3://")
 
-    bucket, key = path.split('/', 1)
+    bucket, key = path.split("/", 1)
 
     if type == "file":
         return bucket, key
@@ -168,7 +170,7 @@ def list_s3_files(path, s3_client=None):
         list[str]: List of object keys (not full s3:// URIs). Empty list when no objects found.
     """
     if s3_client is None:
-        s3_client = boto3.client('s3')
+        s3_client = boto3.client("s3")
 
     if re.search("[*]", path):
         suffix = path.split("*")[-1]

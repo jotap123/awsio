@@ -3,12 +3,13 @@
 Provides a tiny cache layer and a device-code authorization flow that interacts
 with AWS SSO OIDC service.
 """
-import os
+
 import json
+import os
 import time
 import webbrowser
+from datetime import datetime, timedelta, timezone
 
-from datetime import datetime, timezone, timedelta
 from awsio.config import CACHE_FILE
 
 
@@ -21,7 +22,7 @@ def load_cache():
     """
     if os.path.isfile(CACHE_FILE):
         try:
-            with open(CACHE_FILE, 'r') as f:
+            with open(CACHE_FILE, "r") as f:
                 return json.load(f)
         except Exception:
             return {}
@@ -36,7 +37,7 @@ def save_cache(data):
         data (dict): Data to persist (e.g., {'access_token': str, 'expires_at': isoformat_str}).
     """
     os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
-    with open(CACHE_FILE, 'w') as f:
+    with open(CACHE_FILE, "w") as f:
         json.dump(data, f)
 
 
@@ -66,27 +67,26 @@ def authentication(sso_oidc, use_cache=True):
         # Reutilizar access_token se ainda válido e cache habilitado
         if use_cache:
             cache = load_cache()
-            if 'access_token' in cache and 'expires_at' in cache:
-                expires_at = datetime.fromisoformat(cache['expires_at'])
+            if "access_token" in cache and "expires_at" in cache:
+                expires_at = datetime.fromisoformat(cache["expires_at"])
                 if now < expires_at - timedelta(seconds=60):
                     print("🔄 Usando access token em cache. Expira em", expires_at)
-                    return cache['access_token']
+                    return cache["access_token"]
 
         # Fluxo de device authorization
         register = sso_oidc.register_client(
-            clientName=os.getenv('OIDC_APP_NAME', ''),
-            clientType='public'
+            clientName=os.getenv("OIDC_APP_NAME", ""), clientType="public"
         )
-        client_id = register['clientId']
-        client_secret = register['clientSecret']
+        client_id = register["clientId"]
+        client_secret = register["clientSecret"]
 
         start = sso_oidc.start_device_authorization(
             clientId=client_id,
             clientSecret=client_secret,
-            startUrl=os.getenv('START_URL', '')
+            startUrl=os.getenv("START_URL", ""),
         )
-        device_code = start['deviceCode']
-        verification_uri = start['verificationUriComplete']
+        device_code = start["deviceCode"]
+        verification_uri = start["verificationUriComplete"]
 
         print("🔑 Abra no navegador e faça login:", verification_uri)
         webbrowser.open(verification_uri)
@@ -98,32 +98,31 @@ def authentication(sso_oidc, use_cache=True):
                 resp = sso_oidc.create_token(
                     clientId=client_id,
                     clientSecret=client_secret,
-                    grantType='urn:ietf:params:oauth:grant-type:device_code',
-                    deviceCode=device_code
+                    grantType="urn:ietf:params:oauth:grant-type:device_code",
+                    deviceCode=device_code,
                 )
                 break
             except sso_oidc.exceptions.AuthorizationPendingException:
-                time.sleep(start['interval'])
+                time.sleep(start["interval"])
                 attempts += 1
             except Exception as e:
                 raise Exception(f"Erro na autenticação: {e}")
         else:
             raise Exception("Timeout na autenticação - tente novamente")
 
-        access_token = resp['accessToken']
-        expires_in = resp['expiresIn']
+        access_token = resp["accessToken"]
+        expires_in = resp["expiresIn"]
         expires_at = now + timedelta(seconds=expires_in)
 
         # Salvar em cache se habilitado
         if use_cache:
-            save_cache({
-                'access_token': access_token,
-                'expires_at': expires_at.isoformat()
-            })
+            save_cache(
+                {"access_token": access_token, "expires_at": expires_at.isoformat()}
+            )
             print("✅ Token obtido e salvo em cache. Expira em", expires_at)
         else:
             print("✅ Token obtido (cache desabilitado)")
-        
+
         return access_token
     except Exception as e:
         print(f"❌ Erro na autenticação: {e}")
