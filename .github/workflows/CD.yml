@@ -18,4 +18,4 @@ jobs:
           ref: master 
 
       - name: Run deployment script
-        run: awsio/autopublish.sh
+        run: ./autopublish.sh
