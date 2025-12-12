@@ -178,38 +178,13 @@ def list_s3_files(path, s3_client=None):
         suffix = None
 
     bucket, key = split_bucket_key(path, type="folder")
-    files = s3_client.list_objects_v2(
-        Bucket=bucket,
-        Prefix=key,
-        Delimiter="/"
-    )
+    paginator = s3_client.get_paginator("list_objects_v2")
 
-    list_files = []
-    try:
-        for content in files['Contents']:
-            list_files.append(content['Key'])
+    final_files = []
+    for page in paginator.paginate(Bucket=bucket, Prefix=key):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if suffix is None or key.lower().endswith(suffix.lower()):
+                final_files.append(path_join("s3:/", bucket, key))
 
-        if suffix and filename not in ["*", ""]:
-            fname_files = [
-                path_join("s3:/", bucket, file)
-                for file in list_files
-                if re.search(filename, file) is not None
-            ]
-            final_files = [
-                file for file in fname_files
-                if file.endswith(suffix)
-            ]
-            return final_files
-
-        elif suffix:
-            final_files = [
-                path_join("s3:/", bucket, file)
-                for file in list_files
-                if file.endswith(suffix)
-            ]
-            return final_files
-
-    except KeyError:
-        print(f"No files found in {path}")
-
-    return list_files
+    return final_files
