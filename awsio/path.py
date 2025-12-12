@@ -172,7 +172,6 @@ def list_s3_files(path, s3_client=None):
 
     if re.search("[*]", path):
         suffix = path.split("*")[-1]
-        filename = path.split("*")[0].split("/")[-1]
         path = "/".join(path.split("/")[:-1])
     else:
         suffix = None
