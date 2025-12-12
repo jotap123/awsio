@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "awsio"
-version = "0.1"
+version = "0.2.0"
 description = "Utilities library for read/write operations and general data cleaning routines"
 authors = [
   { name="João Pedro Alves", email="jotapedro1997@gmail.com" },
@@ -20,12 +20,20 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 
+dependencies = [
+    "boto3",
+    "numpy",
+    "pandas",
+    "joblib",
+    "pyarrow",
+    "openpyxl",
+    "python-dotenv",
+    "awswrangler",
+]
+
 [tool.setuptools.packages.find]
 include = ["awsio*"] # Glob patterns for packages to include
 exclude = ["notebooks*", "awsio.egg-info*"] # Glob patterns for packages/directories to exclude
-
-[tool.setuptools.dynamic]
-dependencies = {file = ["requirements.txt"]}
 
 [project.urls]
 Homepage = "https://github.com/jotap123/awsio/tree/develop"

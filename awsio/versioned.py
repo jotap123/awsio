@@ -3,7 +3,7 @@ import boto3
 import pandas as pd
 import awswrangler as wr
 
-from awsio.path import get_date_from_filenames, path_join, list_s3_files, split_bucket_key
+from awsio.path import get_date_from_filenames, list_s3_files
 from awsio.parallelism import applyParallel
 
 
@@ -62,6 +62,33 @@ def load_history(path: str, min_date="2020-01-01", s3_client=None, **kwargs):
     return df
 
 
+def load_last_file(path: str, s3_client=None, **kwargs):
+    """
+    Load and concatenate historical files from an S3 path filtered by date token.
+
+    The function scans files under `path`, looks for a YYYYMM token inside each filename,
+    filters files with token >= min_date, then reads and concatenates them (using awswrangler).
+
+    Args:
+        path (str): S3 path to scan (file or folder).
+        min_date (str or datetime-like): Minimum date threshold (inclusive). Files whose
+            embedded YYYYMM token is earlier than this will be ignored.
+        path_type (str): 'file' or 'folder' passed to split_bucket_key.
+        s3_client (boto3.client or None): S3 client to use. A client is created if None.
+        **kwargs: Additional kwargs forwarded to wr.s3.read_parquet.
+
+    Returns:
+        pd.DataFrame: Concatenated DataFrame of selected parquet files. Empty DataFrame
+        is returned if no files match.
+    """
+    # list all file keys under the provided path
+    last_file = list_s3_files(path, s3_client)[-1]
+
+    df = wr.s3.read_parquet(last_file, **kwargs)
+
+    return df
+
+
 def extract_file(
     x,
     file_format,
@@ -86,7 +113,8 @@ def extract_file(
         **kwargs: Forwarded to the selected reading function (e.g. read_csv sep).
 
     Returns:
-        pd.DataFrame: The read (and transformed) DataFrame or an empty DataFrame when errors='ignore'.
+        pd.DataFrame: The read (and transformed) DataFrame or an empty DataFrame
+        when errors='ignore'.
     """
 
     if verbose > 0:
